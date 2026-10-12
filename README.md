@@ -31,7 +31,7 @@ py -3 -m venv .venv
 
 从 [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) 下载 Windows x64 Essentials build，并将 `ffmpeg.exe` 和 `ffprobe.exe` 放进项目的 `tools` 文件夹；也可以把它们加入系统 `PATH`。硬件编码需要兼容的 Intel 显卡和驱动。程序也会查找本机 LosslessCut 的 `resources` 目录。
 
-仓库不托管 FFmpeg 可执行文件。它们超过 GitHub 单文件大小限制；克隆项目后需按上述步骤自行下载。当前开发环境使用的 FFmpeg 9.0.2 构建信息和许可证保存在 `tools/FFmpeg-README.txt` 与 `tools/FFmpeg-LICENSE.txt`。
+仓库源码不托管 FFmpeg 可执行文件，因为它们超过 GitHub 单文件大小限制；克隆项目后需按上述步骤自行下载。Windows 便携版可从 [GitHub Releases](https://github.com/Alexy-Lin/easy-video-editor/releases) 下载，压缩包包含应用文件、FFmpeg 9.0.2 和对应许可证/构建说明。当前开发环境使用的构建信息也保存在 `tools/FFmpeg-README.txt` 与 `tools/FFmpeg-LICENSE.txt`。
 
 运行源码：
 
@@ -95,7 +95,7 @@ py -3 -m venv .venv
 
 Download a Windows x64 Essentials build from [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) and place `ffmpeg.exe` and `ffprobe.exe` in the project's `tools` folder, or add them to `PATH`. Hardware encoding requires a compatible Intel GPU and driver. The app also checks LosslessCut's local `resources` directory.
 
-The repository does not host FFmpeg executables because they exceed GitHub's per-file size limit. After cloning, download them as described above. Build details and the license for the FFmpeg 9.0.2 build used in the current development environment are in `tools/FFmpeg-README.txt` and `tools/FFmpeg-LICENSE.txt`.
+The source repository does not host FFmpeg executables because they exceed GitHub's per-file size limit. Download them as described above when building from source. A Windows portable package is available from [GitHub Releases](https://github.com/Alexy-Lin/easy-video-editor/releases); it includes the app files, FFmpeg 9.0.2, and the corresponding license/build notices. Build details for the version used in the current development environment are also in `tools/FFmpeg-README.txt` and `tools/FFmpeg-LICENSE.txt`.
 
 Run from source:
 
