@@ -7,6 +7,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -100,10 +101,16 @@ def optional_int(value: object) -> int | None:
 
 def find_ffmpeg_tools() -> tuple[str, str]:
     """Search project tools, LosslessCut resources, then PATH."""
-    root = Path(__file__).resolve().parent
+    roots = [Path(__file__).resolve().parent]
+    if getattr(sys, "frozen", False):
+        roots.insert(0, Path(sys.executable).resolve().parent)
     ffmpeg_names = ("ffmpeg.exe", "ffmpeg") if os.name == "nt" else ("ffmpeg",)
     ffprobe_names = ("ffprobe.exe", "ffprobe") if os.name == "nt" else ("ffprobe",)
-    directories = [root / "tools", root / "tools" / "ffmpeg", root]
+    directories = [
+        folder
+        for root in roots
+        for folder in (root / "tools", root / "tools" / "ffmpeg", root)
+    ]
     for env_name in ("LOSSLESSCUT_PATH", "LOSSLESS_CUT_PATH"):
         configured = os.environ.get(env_name)
         if configured:
