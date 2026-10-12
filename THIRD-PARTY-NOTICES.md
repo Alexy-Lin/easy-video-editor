@@ -8,7 +8,7 @@ This file applies to the Windows portable release. The Easy Video Editor applica
 
 | Component / 组件 | Version / 版本 | License / 许可证 | Notice and source / 声明与源码 |
 | --- | --- | --- | --- |
-| PySide6, shiboken6, Qt for Python and Qt / Qt for Python 与 Qt | 6.8.3 | LGPL-3.0 terms used for this release / 本发行包按 LGPL-3.0 条款提供 | `licenses/LGPL-3.0.txt`; [Qt for Python licensing](https://doc.qt.io/qtforpython-6/commercial/index.html), [Qt for Python third-party licenses](https://doc.qt.io/qtforpython-6/licenses.html), [PySide source](https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=6.8.3), and [Qt source repositories](https://code.qt.io/) |
+| PySide6, shiboken6, Qt for Python and Qt / Qt for Python 与 Qt | 6.11.2 | LGPL-3.0 terms used for this release / 本发行包按 LGPL-3.0 条款提供 | `licenses/LGPL-3.0.txt`; [Qt for Python licensing](https://doc.qt.io/qtforpython-6/commercial/index.html), [Qt for Python third-party licenses](https://doc.qt.io/qtforpython-6/licenses.html), [PySide source](https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=6.11.2), and [Qt source repositories](https://code.qt.io/) |
 | CPython runtime / CPython 运行时 | 3.13.14 | Python Software Foundation License 2 / Python 软件基金会许可证 2 | `licenses/Python-LICENSE.txt`; [Python source](https://github.com/python/cpython/tree/v3.13.14) |
 | PyInstaller bootloader / PyInstaller 引导程序 | 6.22.3 | GPL-2.0-or-later with Bootloader Exception / GPL-2.0-or-later，含引导程序例外 | `licenses/PyInstaller-COPYING.txt`; [PyInstaller source](https://github.com/pyinstaller/pyinstaller/tree/v6.22.3) |
 | FFmpeg and FFprobe / FFmpeg 与 FFprobe | 9.0.2 Essentials build | GPL-3.0 | `tools/FFmpeg-LICENSE.txt` and `tools/FFmpeg-README.txt`; [FFmpeg source commit](https://github.com/FFmpeg/FFmpeg/commit/946fcce07b) |

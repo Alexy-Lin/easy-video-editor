@@ -5,7 +5,7 @@ import math
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import (
@@ -17,10 +17,24 @@ from PySide6.QtWidgets import (
 
 from conversion_page import ConversionPage
 from video_engine import (
-    FFmpegRunner, MediaInfo, Segment, VIDEO_EXTENSIONS, even_dimensions,
-    probe_media, retained_segments, split_at, set_deleted, default_output_path,
+    FFmpegRunner, HardwareDecoderError, HardwareEncoderError, LosslessExportError,
+    MediaInfo, Segment, VIDEO_EXTENSIONS, even_dimensions,
+    nearest_keyframe_time, probe_keyframe_times, probe_media, retained_segments,
+    split_at, set_deleted, default_output_path,
 )
 from video_widgets import PlayerPanel, format_time
+
+
+def _last_dialog_directory(settings: QSettings, key: str) -> str:
+    saved = settings.value(key, str(Path.home()))
+    directory = Path(str(saved)).expanduser()
+    if not directory.is_dir():
+        directory = Path.home()
+    return str(directory)
+
+
+def _remember_dialog_directory(settings: QSettings, key: str, directory: Path):
+    settings.setValue(key, str(directory.resolve()))
 
 
 class BackgroundTask(QThread):
@@ -54,11 +68,39 @@ class ProbeTask(QThread):
             self.completed.emit(None, str(exc))
 
 
+class KeyframeTask(QThread):
+    completed = Signal(object, str)
+
+    def __init__(self, path: Path, media_start_time: float, ffprobe: str | None = None):
+        super().__init__()
+        self.path = path
+        self.media_start_time = media_start_time
+        self.ffprobe = ffprobe
+        self.cancel_event = threading.Event()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def run(self):
+        try:
+            frames = probe_keyframe_times(
+                self.path, self.ffprobe, self.media_start_time, self.cancel_event,
+            )
+            self.completed.emit(frames, "")
+        except Exception as exc:
+            self.completed.emit(None, str(exc))
+
+
 class CutPage(QWidget):
     def __init__(self, window: "MainWindow"):
         super().__init__(window)
         self.window = window
+        self.dialog_settings = QSettings("EasyVideoEditor", "EasyVideoEditor")
         self.info: MediaInfo | None = None
+        self.source_path: Path | None = None
+        self.keyframes: list[float] = []
+        self.keyframe_scan_state = "idle"
+        self.keyframe_task: KeyframeTask | None = None
         self.segments: list[Segment] = []
         self.selected_index = -1
         self.history: list[tuple[list[Segment], int]] = []
@@ -78,6 +120,12 @@ class CutPage(QWidget):
         self.time_input.setRange(0, 24 * 60 * 60)
         self.time_input.setSingleStep(0.1)
         self.time_input.setSuffix(" 秒")
+        self.lossless_checkbox = QCheckBox("无损裁剪（自动吸附关键帧）")
+        self.lossless_checkbox.setChecked(True)
+        self.lossless_checkbox.setToolTip(
+            "默认启用流复制，不重新编码。分割点会吸附到当前片段内最近的关键帧；"
+            "取消勾选可按精确时间切割并重新编码，优先尝试 QSV 硬件解码，不可用时自动回退软件解码。"
+        )
         self.split_playhead_button = QPushButton("在当前位置分割")
         self.split_time_button = QPushButton("按输入时间分割")
         self.delete_button = QPushButton("标记为删除")
@@ -90,6 +138,7 @@ class CutPage(QWidget):
         self.player.play_button.clicked.connect(self._play)
         self.split_playhead_button.clicked.connect(self.split_playhead)
         self.split_time_button.clicked.connect(lambda: self._split(self.time_input.value()))
+        self.lossless_checkbox.toggled.connect(self._lossless_toggled)
         self.delete_button.clicked.connect(lambda: self._mark(True))
         self.restore_button.clicked.connect(lambda: self._mark(False))
         self.reset_button.clicked.connect(self.reset)
@@ -124,6 +173,7 @@ class CutPage(QWidget):
         time_row.addWidget(QLabel("分割时间"))
         time_row.addWidget(self.time_input, 1)
         right_layout.addLayout(time_row)
+        right_layout.addWidget(self.lossless_checkbox)
         for button in (self.split_playhead_button, self.split_time_button, self.delete_button,
                        self.restore_button, self.reset_button, self.export_button):
             right_layout.addWidget(button)
@@ -134,39 +184,120 @@ class CutPage(QWidget):
 
     def open_video(self):
         filename, _ = QFileDialog.getOpenFileName(
-            self, "打开视频", "",
+            self, "打开视频", _last_dialog_directory(self.dialog_settings, "editing/last_input_directory"),
             "视频文件 (*.mp4 *.mkv *.mov *.m4v *.avi *.webm *.ts *.wmv *.mts *.m2ts);;所有文件 (*)",
         )
         if not filename:
             return
         path = Path(filename).resolve()
+        _remember_dialog_directory(self.dialog_settings, "editing/last_input_directory", path.parent)
+        if self.keyframe_task is not None and self.keyframe_task.isRunning():
+            self.keyframe_task.cancel()
+        self.keyframe_task = None
+        self.source_path = path
         self.info = None
+        self.keyframes = []
+        self.keyframe_scan_state = "idle"
         self.segments = []
         self.selected_index = -1
         self.history.clear()
         self.history_index = -1
         self.player.set_source(path)
         self.status_label.setText(f"正在读取：{path.name}")
-        self.window.analyze(path, self._media_loaded, self._media_failed)
+        self.window.analyze(
+            path,
+            lambda info, source=path: self._media_loaded(source, info),
+            lambda error, source=path: self._media_failed(source, error),
+        )
         self._refresh()
 
-    def _media_loaded(self, info: MediaInfo):
+    def _media_loaded(self, source: Path, info: MediaInfo):
+        if self.source_path != source:
+            return
         self.info = info
         self.segments = [Segment(0.0, info.duration, False)]
         self.selected_index = 0
         self.history = [(list(self.segments), self.selected_index)]
         self.history_index = 0
         self.time_input.setRange(0.0, info.duration)
+        self.keyframe_scan_state = "scanning"
         self.status_label.setText(
             f"{info.path.name}\n{info.display_width}×{info.display_height} · "
-            f"{float(info.fps):.3g} fps · {format_time(info.duration)}"
+            f"{float(info.fps):.3g} fps · {format_time(info.duration)}\n正在扫描关键帧…"
+        )
+        self.keyframe_task = self.window.analyze_keyframes(
+            source, info.start_time,
+            lambda frames, path=source: self._keyframes_loaded(path, frames),
+            lambda error, path=source: self._keyframes_failed(path, error),
         )
         self._refresh()
 
-    def _media_failed(self, message: str):
+    def _media_failed(self, source: Path, message: str):
+        if self.source_path != source:
+            return
         self.status_label.setText("媒体信息读取失败：" + message)
         QMessageBox.warning(self, "无法读取视频", message)
         self._refresh()
+
+    def _keyframes_loaded(self, source: Path, keyframes: list[float]):
+        if self.source_path != source:
+            return
+        self.keyframe_task = None
+        self.keyframes = keyframes
+        self.keyframe_scan_state = "ready"
+        if self.info:
+            self.status_label.setText(
+                f"{self.info.path.name}\n{self.info.display_width}×{self.info.display_height} · "
+                f"{float(self.info.fps):.3g} fps · {format_time(self.info.duration)}\n"
+                f"已扫描 {len(keyframes):,} 个关键帧；无损模式会吸附分割点。"
+            )
+        self._refresh()
+
+    def _keyframes_failed(self, source: Path, error: str):
+        if self.source_path != source:
+            return
+        self.keyframe_task = None
+        self.keyframes = []
+        self.keyframe_scan_state = "failed"
+        if self.info:
+            self.status_label.setText(
+                f"{self.info.path.name}\n关键帧扫描失败：{error}\n"
+                "取消无损裁剪后仍可使用精确重编码模式。"
+            )
+        self._refresh()
+
+    def _lossless_toggled(self, checked: bool):
+        if self.info:
+            if checked and self.keyframe_scan_state == "scanning":
+                self.status_label.setText(f"{self.info.path.name}\n正在扫描关键帧…")
+            elif checked and self.keyframe_scan_state == "failed":
+                self.status_label.setText(
+                    f"{self.info.path.name}\n关键帧扫描失败；无损模式暂不可用。"
+                    "取消勾选可使用精确重编码模式。"
+                )
+            elif checked and not self._cuts_are_keyframes():
+                self.status_label.setText(
+                    f"{self.info.path.name}\n当前已有切点不是关键帧。请重置后在无损模式下重新分割，"
+                    "或取消勾选进行精确重编码。"
+                )
+            elif not checked:
+                self.status_label.setText(
+                    f"{self.info.path.name}\n精确剪辑模式：按切点重编码，不吸附关键帧。"
+                )
+            elif self.keyframe_scan_state == "ready":
+                self.status_label.setText(
+                    f"{self.info.path.name}\n无损模式：已扫描 {len(self.keyframes):,} 个关键帧。"
+                )
+        self._refresh()
+
+    def _cuts_are_keyframes(self) -> bool:
+        if not self.info or self.keyframe_scan_state != "ready":
+            return False
+        tolerance = max(0.002, 0.1 / max(float(self.info.fps), 1.0))
+        return all(
+            any(abs(segment.end - keyframe) <= tolerance for keyframe in self.keyframes)
+            for segment in self.segments[:-1]
+        )
 
     def _push_history(self):
         self.history = self.history[:self.history_index + 1]
@@ -197,9 +328,46 @@ class CutPage(QWidget):
     def _split(self, seconds: float):
         if not self.info:
             return
-        updated, index = split_at(self.segments, seconds, self.info.fps, self.info.duration)
+        align_to_frame = True
+        if self.lossless_checkbox.isChecked():
+            if self.keyframe_scan_state != "ready":
+                self.status_label.setText(
+                    "无损裁剪暂不可用：正在扫描关键帧或扫描失败。等待扫描完成，"
+                    "或取消勾选后使用精确重编码。"
+                )
+                return
+            boundary_tolerance = 0.5 / max(float(self.info.fps), 1.0)
+            if any(
+                abs(seconds - boundary) <= boundary_tolerance
+                for part in self.segments
+                for boundary in (part.start, part.end)
+            ):
+                return
+            current = next(
+                (part for part in self.segments if part.start <= seconds < part.end),
+                self.segments[-1] if self.segments and abs(seconds - self.info.duration) <= 1e-6 else None,
+            )
+            if current is None:
+                return
+            snapped = nearest_keyframe_time(
+                seconds, self.keyframes, current.start, current.end, self.info.fps,
+            )
+            if snapped is None:
+                self.status_label.setText("当前片段内没有可用于分割的关键帧。")
+                return
+            seconds = snapped
+            align_to_frame = False
+            self.time_input.setValue(snapped)
+            self.player.player.pause()
+            self.player.player.setPosition(round(snapped * 1000))
+        updated, index = split_at(
+            self.segments, seconds, self.info.fps, self.info.duration,
+            align_to_frame=align_to_frame,
+        )
         if index is not None:
             self._commit(updated, index)
+            if self.lossless_checkbox.isChecked():
+                self.status_label.setText(f"分割点已吸附到关键帧：{format_time(seconds)}")
 
     def _mark(self, deleted: bool):
         if 0 <= self.selected_index < len(self.segments):
@@ -237,12 +405,16 @@ class CutPage(QWidget):
         duration = self.info.duration if self.info else 0.0
         self.player.timeline.set_timeline(self.segments, duration, self.selected_index)
         editing = self.info is not None and not self.window.task_active
-        for control in (self.segment_list, self.time_input, self.split_playhead_button, self.split_time_button,
-                        self.delete_button, self.restore_button, self.reset_button, self.export_button,
-                        self.skip_deleted):
+        lossless_ready = not self.lossless_checkbox.isChecked() or self.keyframe_scan_state == "ready"
+        cuts_aligned = not self.lossless_checkbox.isChecked() or self._cuts_are_keyframes()
+        for control in (self.segment_list, self.time_input, self.delete_button, self.restore_button,
+                        self.reset_button, self.skip_deleted):
             control.setEnabled(editing)
+        self.lossless_checkbox.setEnabled(editing)
+        self.split_playhead_button.setEnabled(editing and lossless_ready)
+        self.split_time_button.setEnabled(editing and lossless_ready)
         self.player.open_button.setEnabled(not self.window.task_active)
-        self.export_button.setEnabled(editing)
+        self.export_button.setEnabled(editing and lossless_ready and cuts_aligned)
         self._update_playback_shortcuts(None, QApplication.focusWidget())
 
     def _play(self):
@@ -342,10 +514,45 @@ class CutPage(QWidget):
         ranges = [(self.info.path, part.start, part.end) for part in segments]
         output_size = even_dimensions(self.info.display_width, self.info.display_height)
         output_fps = self.info.fps
+
+        if self.lossless_checkbox.isChecked():
+            self.window.run_task(
+                "正在无损导出剪辑…",
+                lambda cancel, progress: self.window.runner.export_ranges(
+                    ranges, destination, cancel, progress, output_size, output_fps, lossless=True,
+                ),
+                success_callback=lambda _result: self.window.status_label.setText(
+                    "剪辑完成：已使用无损流复制。"
+                ),
+            )
+            return
+
+        strategy = {"hardware_decode": True}
+
+        def operation(cancel, progress):
+            try:
+                return self.window.runner.export_ranges(
+                    ranges, destination, cancel,
+                    lambda fraction, stage: progress(0.68 * fraction, "正在硬件解码 · " + stage),
+                    output_size, output_fps, use_hardware_decoder=True,
+                )
+            except HardwareDecoderError as exc:
+                if cancel.is_set():
+                    raise
+                strategy["hardware_decode"] = False
+                reason = str(exc).splitlines()[-1][:120]
+                progress(0.69, f"硬件解码不可用（{reason}），自动切换到软件解码…")
+                return self.window.runner.export_ranges(
+                    ranges, destination, cancel,
+                    lambda fraction, stage: progress(0.69 + 0.31 * fraction, "软件解码回退 · " + stage),
+                    output_size, output_fps,
+                )
+
         self.window.run_task(
-            "正在导出剪辑…",
-            lambda cancel, progress: self.window.runner.export_ranges(
-                ranges, destination, cancel, progress, output_size, output_fps,
+            "正在导出剪辑（优先硬件解码）…",
+            operation,
+            success_callback=lambda _result: self.window.status_label.setText(
+                "剪辑完成：" + ("硬件解码。" if strategy["hardware_decode"] else "硬件解码不可用，已回退到软件解码。")
             ),
         )
 
@@ -360,6 +567,8 @@ class MergePage(QWidget):
     def __init__(self, window: "MainWindow"):
         super().__init__(window)
         self.window = window
+        self.dialog_settings = QSettings("EasyVideoEditor", "EasyVideoEditor")
+        self.last_input_directory_key = "merge/last_input_directory"
         self.file_list = QListWidget(self)
         self.add_files_button = QPushButton("添加视频文件…")
         self.add_folder_button = QPushButton("添加文件夹…")
@@ -367,7 +576,10 @@ class MergePage(QWidget):
         self.down_button = QPushButton("下移")
         self.remove_button = QPushButton("移除")
         self.merge_button = QPushButton("按列表顺序合并")
-        self.hint = QLabel("至少添加两个视频。输出使用第一个视频的尺寸和帧率；原视频保持不变。")
+        self.hint = QLabel(
+            "至少添加两个视频。优先无损拼接；不兼容时自动识别显卡并尝试硬件编码，最后回退 CPU 软件编码。"
+            "重编码输出使用第一个视频的尺寸和帧率；原视频保持不变。"
+        )
         self.hint.setWordWrap(True)
         layout = QVBoxLayout(self)
         layout.addWidget(self.hint)
@@ -388,14 +600,20 @@ class MergePage(QWidget):
 
     def add_files(self):
         filenames, _ = QFileDialog.getOpenFileNames(
-            self, "添加视频", "",
+            self, "添加视频", _last_dialog_directory(self.dialog_settings, self.last_input_directory_key),
             "视频文件 (*.mp4 *.mkv *.mov *.m4v *.avi *.webm *.ts *.wmv *.mts *.m2ts);;所有文件 (*)",
         )
-        self._append([Path(name) for name in filenames])
+        paths = [Path(name) for name in filenames]
+        if paths:
+            _remember_dialog_directory(self.dialog_settings, self.last_input_directory_key, paths[0].parent)
+        self._append(paths)
 
     def add_folder(self):
-        directory = QFileDialog.getExistingDirectory(self, "添加文件夹中的视频")
+        directory = QFileDialog.getExistingDirectory(
+            self, "添加文件夹中的视频", _last_dialog_directory(self.dialog_settings, self.last_input_directory_key),
+        )
         if directory:
+            _remember_dialog_directory(self.dialog_settings, self.last_input_directory_key, Path(directory))
             videos = sorted(p for p in Path(directory).rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS)
             self._append(videos)
 
@@ -436,6 +654,7 @@ class MergePage(QWidget):
             return
         destination = Path(filename).with_suffix(".mp4")
         paths = [Path(self.file_list.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.file_list.count())]
+        strategy = {"mode": "无损流复制"}
 
         def operation(cancel, progress):
             ranges = []
@@ -447,14 +666,42 @@ class MergePage(QWidget):
                 info = probe_media(path)
                 infos.append(info)
                 ranges.append((path, 0.0, info.duration))
-            def merge_progress(fraction: float, stage: str):
-                progress(0.03 + 0.97 * fraction, stage)
-            return self.window.runner.export_ranges(
-                ranges, destination, cancel, merge_progress,
-                even_dimensions(infos[0].display_width, infos[0].display_height), infos[0].fps,
-            )
+            output_size = even_dimensions(infos[0].display_width, infos[0].display_height)
+            output_fps = infos[0].fps
+            try:
+                return self.window.runner.export_ranges(
+                    ranges, destination, cancel,
+                    lambda fraction, stage: progress(0.03 + 0.27 * fraction, "无损合并 · " + stage),
+                    output_size, output_fps, lossless=True,
+                )
+            except LosslessExportError as exc:
+                if cancel.is_set():
+                    raise
+                reason = str(exc).splitlines()[-1][:120]
+                progress(0.30, f"无损拼接不可用（{reason}），尝试硬件编码…")
+                strategy["mode"] = "硬件编码"
+                try:
+                    return self.window.runner.export_ranges(
+                        ranges, destination, cancel,
+                        lambda fraction, stage: progress(0.30 + 0.35 * fraction, "硬件编码回退 · " + stage),
+                        output_size, output_fps, use_hardware_encoding=True,
+                    )
+                except HardwareEncoderError as exc:
+                    if cancel.is_set():
+                        raise
+                    reason = str(exc).splitlines()[-1][:120]
+                    progress(0.66, f"硬件编码不可用（{reason}），自动切换到软件编码…")
+                    strategy["mode"] = "软件编码回退"
+                    return self.window.runner.export_ranges(
+                        ranges, destination, cancel,
+                        lambda fraction, stage: progress(0.66 + 0.34 * fraction, "软件编码回退 · " + stage),
+                        output_size, output_fps,
+                    )
 
-        self.window.run_task("正在合并视频…", operation)
+        def merge_done(_result):
+            self.window.status_label.setText(f"合并完成：{strategy['mode']}。")
+
+        self.window.run_task("正在合并视频…", operation, merge_done)
 
     def _refresh(self):
         busy = self.window.task_active
@@ -481,8 +728,8 @@ class MainWindow(QMainWindow):
         self.worker: BackgroundTask | None = None
         self.success_callback = None
         self.close_after_task = False
-        self.analysis_threads: set[ProbeTask] = set()
-        self.analysis_callbacks: dict[ProbeTask, tuple[object, object]] = {}
+        self.analysis_threads: set[QThread] = set()
+        self.analysis_callbacks: dict[QThread, tuple[object, object]] = {}
         try:
             self.runner = FFmpegRunner()
             self.tool_error = ""
@@ -529,6 +776,14 @@ class MainWindow(QMainWindow):
 
     def analyze(self, path: Path, success, failure):
         task = ProbeTask(path)
+        self._start_analysis_task(task, success, failure)
+
+    def analyze_keyframes(self, path: Path, media_start_time: float, success, failure):
+        task = KeyframeTask(path, media_start_time, self.runner.ffprobe if self.runner else None)
+        self._start_analysis_task(task, success, failure)
+        return task
+
+    def _start_analysis_task(self, task: QThread, success, failure):
         self.analysis_threads.add(task)
         self.analysis_callbacks[task] = (success, failure)
         task.completed.connect(self._probe_completed)
@@ -634,6 +889,10 @@ class MainWindow(QMainWindow):
         if self.analysis_threads:
             self.close_after_task = True
             self.status_label.setText("正在结束媒体信息读取…")
+            for task in tuple(self.analysis_threads):
+                cancel = getattr(task, "cancel", None)
+                if cancel:
+                    cancel()
             event.ignore()
             return
         self.cut_page.pause()

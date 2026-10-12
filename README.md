@@ -8,12 +8,12 @@ Easy Video Editor 是一款本地运行的 Windows 桌面视频工具，提供�
 
 - **分割剪辑**：预览源视频，使用预览下方的彩色时间轴标记保留和删除片段；支持按播放位置或输入时间分割、标记删除、恢复、撤销和重置。空格控制播放/暂停，左右键逐帧移动。
 - **合并视频**：按列表顺序合并两个或更多视频；输出尺寸和帧率取第一个视频，其他视频按比例缩放并补黑边。
-- **格式转换**：支持 MP4/MKV 和原始尺寸、480P、720P、1080P、2K/1440P；默认使用 Intel QSV 硬件编码，也可手动选用 libx264 软件编码。
+- **格式转换**：支持 MP4/MKV 和原始尺寸、480P、720P、1080P、2K/1440P；默认读取显卡型号并自动选择 Intel QSV、NVIDIA NVENC 或 AMD AMF 硬件编码，也可手动选用 libx264 软件编码。
 - **批量转换**：支持队列转换，也可递归转换当前文件夹下的支持视频，并将结果保存到上级目录新建的“压缩后”文件夹。显示总进度和当前视频进度。
 - **视频分析与体积预计**：按当前编码方式抽样比较可用分辨率，显示样片 VMAF 和预计体积；预计大于源文件的选项会标红并禁用。转换日志记录结果、实际体积和占源文件比例。
-- **编码回退与文件保护**：硬件编码失败时先询问是否回退至 CPU 软件编码。输出经过校验后才发布；可选择自动删除大于源文件的结果，源视频始终保留。
+- **编码器记忆、回退与文件保护**：首次识别显卡后会试编码；一次实际视频编码成功后，记住本机硬件编码器供后续启动复用。已保存编码器失效时会重新检测。硬件编码失败时先询问是否回退至 CPU 软件编码。输出经过校验后才发布；可选择自动删除大于源文件的结果，源视频始终保留。
 
-转换视频默认使用 H.264 Intel QSV ICQ 23；软件编码使用 H.264 libx264 CRF 23。有音轨时编码为 AAC。ICQ 23 与 CRF 23 是各编码器自己的质量参数，不代表相同画质；实际体积取决于编码器、画面复杂度和分辨率，预估值不等于最终体积。
+转换视频默认根据显卡自动选择 H.264 Intel QSV、NVIDIA NVENC 或 AMD AMF，并为各编码器使用接近的质量设置；软件编码使用 H.264 libx264 CRF 23。有音轨时编码为 AAC。硬件编码的质量参数与 CRF 23 并不完全等价；实际体积取决于编码器、画面复杂度和分辨率，预估值不等于最终体积。
 
 ### 环境与启动
 
@@ -29,7 +29,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-从 [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) 下载 Windows x64 Essentials build，并将 `ffmpeg.exe` 和 `ffprobe.exe` 放进项目的 `tools` 文件夹；也可以把它们加入系统 `PATH`。硬件编码需要兼容的 Intel 显卡和驱动。程序也会查找本机 LosslessCut 的 `resources` 目录。
+从 [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) 下载 Windows x64 Essentials build，并将 `ffmpeg.exe` 和 `ffprobe.exe` 放进项目的 `tools` 文件夹；也可以把它们加入系统 `PATH`。硬件编码需要 FFmpeg 构建包含对应的 QSV、NVENC 或 AMF 编码器，并安装兼容显卡驱动。程序也会查找本机 LosslessCut 的 `resources` 目录。
 
 仓库源码不托管 FFmpeg 可执行文件，因为它们超过 GitHub 单文件大小限制；克隆项目后需按上述步骤自行下载。Windows 便携版可从 [GitHub Releases](https://github.com/Alexy-Lin/easy-video-editor/releases) 下载，压缩包包含应用文件、FFmpeg 9.0.2 和对应许可证/构建说明。当前开发环境使用的构建信息也保存在 `tools/FFmpeg-README.txt` 与 `tools/FFmpeg-LICENSE.txt`。
 
@@ -72,12 +72,12 @@ Easy Video Editor is a local Windows desktop app for cutting, merging, and conve
 
 - **Cut and edit**: Preview a video and mark retained or deleted segments on the color-coded timeline. Split at the playhead or an entered time; mark, restore, undo, and reset segments. Use Space to play or pause and the arrow keys to step one frame at a time.
 - **Merge videos**: Join two or more videos in list order. The first video determines the output size and frame rate; other videos are scaled proportionally and padded with black bars.
-- **Convert videos**: Supports MP4/MKV and original size, 480p, 720p, 1080p, and 2K/1440p. Intel QSV hardware encoding is the default; libx264 software encoding is also available.
+- **Convert videos**: Supports MP4/MKV and original size, 480p, 720p, 1080p, and 2K/1440p. The default detects the GPU model and selects Intel QSV, NVIDIA NVENC, or AMD AMF; libx264 software encoding is also available.
 - **Batch conversion**: Convert a queue, or recursively convert supported videos in the current folder into a new `Compressed` folder in its parent. The UI shows both overall and current-video progress.
 - **Analysis and size estimates**: Sample the video using the selected encoder, compare available resolutions, and show sample VMAF and estimated output size. Options estimated to exceed the source are marked red and disabled. The conversion log records the result, actual size, and source-size ratio.
-- **Encoder fallback and file safety**: If hardware encoding fails, the app asks before falling back to CPU encoding. Outputs are validated before publication. You can choose to delete results larger than their sources; source videos are kept.
+- **Encoder memory, fallback, and file safety**: The app probes the detected GPU encoder and saves it for this PC after one real video encode succeeds. Later launches reuse the saved backend; if it stops working, the app detects again. If hardware encoding fails, the app asks before falling back to CPU encoding. Outputs are validated before publication. You can choose to delete results larger than their sources; source videos are kept.
 
-The default video settings are H.264 Intel QSV ICQ 23 or, in software mode, H.264 libx264 CRF 23. Audio is encoded as AAC when present. ICQ 23 and CRF 23 are encoder-specific quality settings and do not guarantee identical quality. Actual output size depends on the encoder, content, and resolution; estimates are not guarantees.
+The default selects H.264 Intel QSV, NVIDIA NVENC, or AMD AMF based on the detected GPU and uses an encoder-appropriate quality setting. Software mode uses H.264 libx264 CRF 23. Audio is encoded as AAC when present. Hardware quality parameters are not exactly equivalent to CRF 23. Actual output size depends on the encoder, content, and resolution; estimates are not guarantees.
 
 ### Requirements and setup
 
@@ -93,7 +93,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Download a Windows x64 Essentials build from [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) and place `ffmpeg.exe` and `ffprobe.exe` in the project's `tools` folder, or add them to `PATH`. Hardware encoding requires a compatible Intel GPU and driver. The app also checks LosslessCut's local `resources` directory.
+Download a Windows x64 Essentials build from [gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) and place `ffmpeg.exe` and `ffprobe.exe` in the project's `tools` folder, or add them to `PATH`. Hardware encoding requires FFmpeg to include the matching QSV, NVENC, or AMF encoder and a compatible GPU driver. The app also checks LosslessCut's local `resources` directory.
 
 The source repository does not host FFmpeg executables because they exceed GitHub's per-file size limit. Download them as described above when building from source. A Windows portable package is available from [GitHub Releases](https://github.com/Alexy-Lin/easy-video-editor/releases); it includes the app files, FFmpeg 9.0.2, and the corresponding license/build notices. Build details for the version used in the current development environment are also in `tools/FFmpeg-README.txt` and `tools/FFmpeg-LICENSE.txt`.
 

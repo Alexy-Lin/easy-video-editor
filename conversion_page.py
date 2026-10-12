@@ -48,7 +48,7 @@ class ConversionPage(QWidget):
         self._resolution_item_flags = [self.resolution.model().item(i).flags() for i in range(self.resolution.count())]
         self.resolution.setCurrentText("原始")
         self.encoding_mode = QComboBox(self)
-        self.encoding_mode.addItem("硬件编码（Intel QSV，默认）", True)
+        self.encoding_mode.addItem("硬件编码（自动选择，默认）", True)
         self.encoding_mode.addItem("软件编码（CPU）", False)
         self.crf_label = QLabel()
         self.estimated_use_hardware: bool | None = None
@@ -69,7 +69,7 @@ class ConversionPage(QWidget):
         self.media_info_label = QLabel("添加视频后显示文件信息。")
         self.media_info_label.setWordWrap(True)
         self.quick_analysis_button = QPushButton("分析视频并预计体积")
-        self.quick_analysis_button.setToolTip("按当前选择的硬件或软件编码方式抽样分析，估算各分辨率的输出体积。")
+        self.quick_analysis_button.setToolTip("按当前选择的自动硬件编码器或 CPU 软件编码抽样分析，估算各分辨率的输出体积。")
         self.quick_analysis_note = QLabel("分析后会列出不同分辨率的预计体积。点击未标红的行即可采用该分辨率。")
         self.quick_analysis_note.setWordWrap(True)
         self.estimate_table = QTableWidget(0, 4, self)
@@ -444,12 +444,12 @@ class ConversionPage(QWidget):
     def _quality_description(self, use_hardware: bool | None = None) -> str:
         if use_hardware is None:
             use_hardware = bool(self.encoding_mode.currentData())
-        return f"Intel QSV ICQ {VIDEO_CRF}" if use_hardware else f"H.264 CRF {VIDEO_CRF}（CPU）"
+        return f"自动硬件编码（设备质量参数约 {VIDEO_CRF}）" if use_hardware else f"H.264 CRF {VIDEO_CRF}（CPU）"
 
     def _encoder_tag(self, use_hardware: bool | None = None) -> str:
         if use_hardware is None:
             use_hardware = bool(self.encoding_mode.currentData())
-        return f"QSV{VIDEO_CRF}" if use_hardware else f"CRF{VIDEO_CRF}"
+        return f"HW{VIDEO_CRF}" if use_hardware else f"CRF{VIDEO_CRF}"
 
     def _update_quality_label(self):
         self.crf_label.setText(f"质量参数：{self._quality_description()}")
