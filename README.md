@@ -52,7 +52,7 @@ py -3 -m venv .venv
 
 ### 许可证
 
-本仓库中的 Easy Video Editor 应用源码采用 [Apache License 2.0](LICENSE)。FFmpeg 是独立的第三方程序，许可证取决于所下载的构建；本地开发环境随附的 FFmpeg 9.0.2 构建启用了 GPL 组件，适用 GPLv3，详情见 `tools/FFmpeg-LICENSE.txt`。本仓库不分发 FFmpeg 可执行文件。重新分发 FFmpeg 时，请一并遵守对应构建的许可证和源代码提供要求。
+本仓库中的 Easy Video Editor 应用源码采用 [Apache License 2.0](LICENSE)。FFmpeg 是独立的第三方程序，许可证取决于所下载的构建；本地开发环境随附的 FFmpeg 9.0.2 构建启用了 GPL 组件，适用 GPLv3，详情见 `tools/FFmpeg-LICENSE.txt`。本仓库不分发 FFmpeg 可执行文件。Windows 发行包另含 PySide6/Qt、Python、PyInstaller 与相关运行库，它们保留各自的许可证；发行包和源码包内提供第三方声明、许可证文本及来源信息。重新分发 FFmpeg 时，请一并遵守对应构建的许可证和源代码提供要求。
 
 ### 开发验证
 
@@ -116,7 +116,7 @@ You can also double-click `Easy Video Editor.bat` to launch the app with the pro
 
 ### License
 
-The Easy Video Editor application source in this repository is licensed under the [Apache License 2.0](LICENSE). FFmpeg is a separate third-party program, and its license depends on the build you download. The FFmpeg 9.0.2 build used in the local development environment enables GPL components and is covered by GPLv3; see `tools/FFmpeg-LICENSE.txt`. This repository does not distribute FFmpeg executables. If you redistribute FFmpeg, comply with the applicable license and corresponding-source requirements for that build.
+The Easy Video Editor application source in this repository is licensed under the [Apache License 2.0](LICENSE). FFmpeg is a separate third-party program, and its license depends on the build you download. The FFmpeg 9.0.2 build used in the local development environment enables GPL components and is covered by GPLv3; see `tools/FFmpeg-LICENSE.txt`. This repository does not distribute FFmpeg executables. The Windows release also bundles PySide6/Qt, Python, PyInstaller, and related runtimes, each under its own license. The release and source archives include third-party notices, license texts, and source references. If you redistribute FFmpeg, comply with the applicable license and corresponding-source requirements for that build.
 
 ### Development checks
 
